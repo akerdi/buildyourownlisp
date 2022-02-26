@@ -20,7 +20,17 @@ void add_history(char* input) { }
 #include <editline/readline.h>
 #endif
 
-enum { LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR };
+enum { LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR, LVAL_QEXPR };
+char* ltype_name(int type) {
+    switch (type) {
+        case LVAL_ERR: return "<error>";
+        case LVAL_NUM: return "<number>";
+        case LVAL_SYM: return "<symbol>";
+        case LVAL_SEXPR: return "<sexpr>";
+        case LVAL_QEXPR: return "<qexpr>";
+        default: return "<Unbound function!>";
+    }
+}
 struct lval;
 typedef struct lval lval;
 
@@ -39,10 +49,17 @@ struct lval {
 #define SMALLOC(s) malloc(sizeof(char)*strlength(s))
 #define SMAL_CPY(sptr, s) sptr = SMALLOC(s); strcpy(sptr, s)
 #define FORLESS(count) for (int i = 0; i < count; i++)
+#define LASSERT(arg, cond, fmt, ...) if (!(cond)) { lval* err = lval_err(fmt, ##__VA_ARGS__); lval_del(arg); return err; }
+#define LASSERT_NUM(func, arg, expect) LASSERT(arg, arg->count == expect, "Function '%s' passed invalid count of Arguments." \
+    "Got %i, Expect %i", func, arg->count, expect)
+#define LASSERT_TYPE(func, arg, i, expect) LASSERT(arg, arg->cell[i]->type == expect, "Function '%s' passed invalid format type." \
+    "Got %s, Expect %s", func, ltype_name(arg->cell[i]->type), ltype_name(expect))
+#define LASSERT_NOT_EMPTY(func, arg, i) LASSERT(arg, arg->cell[i]->count != 0, "Function '%s' passed '{}' empty argument at index: %i!", func, i)
 
 /////////////
 void lval_print(lval* v);
 void lval_println(lval* v);
+lval* lval_eval(lval* v);
 /////////////
 
 lval* lval_num(long num) {
@@ -51,11 +68,16 @@ lval* lval_num(long num) {
     v->num = num;
     return v;
 }
-lval* lval_err(char* err) {
+lval* lval_err(char* fmt, ...) {
     NEWLVAL;
     v->type = LVAL_ERR;
-    v->err = SMALLOC(err);
-    strcpy(v->err, err);
+    va_list  va;
+    va_start(va, fmt);
+    static int ERR_LENGTH = 512;
+    v->err = malloc(ERR_LENGTH);
+    vsnprintf(v->err, ERR_LENGTH-1, fmt, va);
+    v->err = realloc(v->err, strlength(v->err));
+    va_end(va);
     return v;
 }
 lval* lval_sym(char* op) {
@@ -67,6 +89,13 @@ lval* lval_sym(char* op) {
 lval* lval_sexpr(void) {
     NEWLVAL;
     v->type = LVAL_SEXPR;
+    v->count = 0;
+    v->cell = NULL;
+    return v;
+}
+lval* lval_qexpr(void) {
+    NEWLVAL;
+    v->type = LVAL_QEXPR;
     v->count = 0;
     v->cell = NULL;
     return v;
@@ -91,6 +120,7 @@ void lval_del(lval* v) {
             break;
         case LVAL_SYM: free(v->sym);
             break;
+        case LVAL_QEXPR:
         case LVAL_SEXPR: lval_expr_del(v);
             break;
     }
@@ -121,10 +151,13 @@ lval* lval_expr_read(mpc_ast_t* t) {
     lval* x;
     if (strcmp(t->tag, ">") == 0) { x = lval_sexpr(); }
     if (strstr(t->tag, "sexpr")) { x = lval_sexpr(); }
+    if (strstr(t->tag, "qexpr")) { x = lval_qexpr(); }
 
     FORLESS(t->children_num) {
         if (strcmp(t->children[i]->contents, "(") == 0) continue;
         if (strcmp(t->children[i]->contents, ")") == 0) continue;
+        if (strcmp(t->children[i]->contents, "{") == 0) continue;
+        if (strcmp(t->children[i]->contents, "}") == 0) continue;
         if (strcmp(t->children[i]->tag, "regex") == 0) continue;
         x = lval_add(x, lval_read(t->children[i]));
     }
@@ -165,8 +198,58 @@ lval* buildin_op(lval* v, char* op) {
     lval_del(v);
     return x;
 }
-
-lval* lval_eval(lval* v);
+lval* buildin_head(lval* v) {
+    LASSERT_NUM("head", v, 1);
+    LASSERT_TYPE("head", v, 0, LVAL_QEXPR);
+    LASSERT_NOT_EMPTY("head", v, 0);
+    lval* x = lval_take(v, 0);
+    while (x->count > 1) { lval_del(lval_pop(x, 1));}
+    return x;
+}
+lval* buildin_tail(lval* v) {
+    LASSERT_NUM("tail", v, 1);
+    LASSERT_TYPE("tail", v, 0, LVAL_QEXPR);
+    LASSERT_NOT_EMPTY("tail", v, 0);
+    lval* x = lval_take(v, 0);
+    lval_del(lval_pop(x, 0));
+    return x;
+}
+lval* buildin_list(lval* v) {
+    v->type = LVAL_QEXPR;
+    return v;
+}
+lval* buildin_eval(lval* v) {
+    LASSERT_NUM("eval", v, 1);
+    LASSERT_TYPE("eval", v, 0, LVAL_QEXPR);
+    lval* x = lval_take(v, 0);
+    x->type = LVAL_SEXPR;
+    return lval_eval(x);
+}
+lval* buildin_join(lval* v) {
+    FORLESS(v->count) {
+        LASSERT_TYPE("join", v, i, LVAL_QEXPR);
+    }
+    lval* x = lval_pop(v, 0);
+    while (v->count) {
+        lval* y = lval_pop(v, 0);
+        while (y->count) {
+            x = lval_add(x, lval_pop(y, 0));
+        }
+        lval_del(y);
+    }
+    lval_del(v);
+    return x;
+}
+lval* buildin(lval* v, char* op) {
+    if (strcmp(op, "head") == 0) return buildin_head(v);
+    if (strcmp(op, "tail") == 0) return buildin_tail(v);
+    if (strcmp(op, "list") == 0) return buildin_list(v);
+    if (strcmp(op, "eval") == 0) return buildin_eval(v);
+    if (strcmp(op, "join") == 0) return buildin_join(v);
+    if (strstr("+-*/", op)) return buildin_op(v, op);
+    lval_del(v);
+    return lval_err("Unknown function: %s", op);
+}
 lval* lval_expr_eval(lval* v) {
     FORLESS(v->count) {
         v->cell[i] = lval_eval(v->cell[i]);
@@ -184,7 +267,8 @@ lval* lval_expr_eval(lval* v) {
         lval_del(f); lval_del(v);
         return lval_err("S-Expression not start with Symbol!");
     }
-    lval* res = buildin_op(v, f->sym);
+    lval* res = buildin(v, f->sym);
+//    lval* res = buildin_op(v, f->sym);
     lval_del(f);
     return res;
 }
@@ -266,6 +350,8 @@ void lval_print(lval* v) {
         case LVAL_SYM: printf("%s", v->sym);
             break;
         case LVAL_SEXPR: lval_expr_print(v, '(', ')');
+            break;
+        case LVAL_QEXPR: lval_expr_print(v, '{', '}');
             break;
     }
 }
