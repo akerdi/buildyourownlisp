@@ -414,6 +414,96 @@ lval* buildin_lambda(lenv* e, lval* v) {
     lval_del(v);
     return lval_lambda(formals, body);
 }
+lval* buildin_ord(lenv* e, lval* v, char* op) {
+    LASSERT_NUM(op, v, 2);
+    LASSERT_TYPE(op, v, 0, LVAL_NUM);
+    LASSERT_TYPE(op, v, 1, LVAL_NUM);
+    int res = 0;
+    if (strcmp(op, ">") == 0) {
+        res = v->cell[0]->num > v->cell[1]->num;
+    }
+    if (strcmp(op, ">=") == 0) {
+        res = v->cell[0]->num >= v->cell[1]->num;
+    }
+    if (strcmp(op, "<") == 0) {
+        res = v->cell[0]->num < v->cell[1]->num;
+    }
+    if (strcmp(op, "<=") == 0) {
+        res = v->cell[0]->num <= v->cell[1]->num;
+    }
+    lval_del(v);
+    return lval_num(res);
+}
+lval* buildin_gt(lenv* e, lval* v) {
+    return buildin_ord(e, v, ">");
+}
+lval* buildin_ge(lenv* e, lval* v) {
+    return buildin_ord(e, v, ">=");
+}
+lval* buildin_lt(lenv* e, lval* v) {
+    return buildin_ord(e, v, "<");
+}
+lval* buildin_le(lenv* e, lval* v) {
+    return buildin_ord(e, v, "<=");
+}
+int lval_compare(lval* x, lval* y) {
+    if (x->type != y->type) return 0;
+    switch (x->type) {
+        case LVAL_NUM: return x->num == y->num;
+        case LVAL_SYM: return strcmp(x->sym, y->sym) == 0;
+        case LVAL_ERR: return strcmp(x->err, y->err) == 0;
+        case LVAL_FUN:
+            if (x->buildin) return x->buildin == y->buildin;
+            return lval_compare(x->formals, y->formals) && lval_compare(x->body, y->body);
+        case LVAL_SEXPR:
+        case LVAL_QEXPR:
+            if (x->count != y->count) return 0;
+            FORLESS(x->count) {
+                if (lval_compare(x->cell[i], y->cell[i]) == 0) return 0;
+            }
+            return 1;
+    }
+    return 1;
+}
+lval* buildin_com(lenv* e, lval* v, char* op) {
+    LASSERT_NUM(op, v, 2);
+
+    lval* a = lval_pop(v, 0);
+    lval* b = lval_pop(v, 0);
+    int x = 0;
+    if (strcmp(op, "==") == 0) {
+        x = lval_compare(a, b);
+    } else {
+        x = !lval_compare(a, b);
+    }
+    lval_del(v);
+    return lval_num(x);
+}
+lval* buildin_eq(lenv* e, lval* v) {
+    return buildin_com(e, v, "==");
+}
+lval* buildin_ne(lenv* e, lval* v) {
+    return buildin_com(e, v, "!=");
+}
+lval* buildin_if(lenv* e, lval* v) {
+    LASSERT_NUM("if", v, 3);
+    LASSERT_TYPE("if", v, 0, LVAL_NUM);
+    LASSERT_TYPE("if", v, 1, LVAL_QEXPR);
+    LASSERT_TYPE("if", v, 2, LVAL_QEXPR);
+    v->cell[1]->type = LVAL_SEXPR;
+    v->cell[2]->type = LVAL_SEXPR;
+    lval* x;
+    if (v->cell[0]->num >= 1) {
+        // lval_eval 是直接执行语句
+        // buildin_eval 支持完整program, 所以其子对象必须是Q-Expression
+        // 所以这里直接把 元素从v 中pop出来成为独立对象(其在执行时被释放)
+        x = lval_eval(e, lval_pop(v, 1));
+    } else {
+        x = lval_eval(e, lval_pop(v, 2));
+    }
+    lval_del(v);
+    return x;
+}
 lval* lval_call(lenv* e, lval* v, lval* f) {
     if (f->buildin) return f->buildin(e, v);
 
@@ -512,6 +602,14 @@ void lenv_add_buildins(lenv* e) {
     lenv_add_buildin(e, "def", buildin_def);
     lenv_add_buildin(e, "=", buildin_put);
     lenv_add_buildin(e, "\\", buildin_lambda);
+
+    lenv_add_buildin(e, ">", buildin_gt);
+    lenv_add_buildin(e, ">=", buildin_ge);
+    lenv_add_buildin(e, "<", buildin_lt);
+    lenv_add_buildin(e, "<=", buildin_le);
+    lenv_add_buildin(e, "==", buildin_eq);
+    lenv_add_buildin(e, "!=", buildin_ne);
+    lenv_add_buildin(e, "if", buildin_if);
 
     lenv_add_buildin(e, "+", buildin_add);
     lenv_add_buildin(e, "-", buildin_sub);
