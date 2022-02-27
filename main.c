@@ -425,7 +425,7 @@ lval* lval_call(lenv* e, lval* v, lval* f) {
                                          "Got %i, Expect %i", "call", count, total);
         }
         lval* sym = lval_pop(f->formals, 0);
-        // def { addCurry } (\ { x y & last } { eval (join (list + x y) (head a) })
+        // def { addCurry } (\ { x y & last } { eval (join (list + x y) (head last) ) })
         // addCurry 10 20 40 30 -> 10 + 20 + 40 = 70
         if (strcmp(sym->sym, "&") == 0) {
             if (f->formals->count != 1) {
@@ -452,7 +452,7 @@ lval* lval_call(lenv* e, lval* v, lval* f) {
         }
         lval_del(lval_pop(f->formals, 0));
         lval* syms = lval_pop(f->formals, 0);
-        lval* vals = lval_sexpr();
+        lval* vals = lval_qexpr();
         lenv_put(f->env, syms, vals);
         lval_del(syms); lval_del(vals);
     }
@@ -494,9 +494,7 @@ lval* lval_eval(lenv* e, lval* v) {
         lval_del(v);
         return x;
     }
-
     if (v->type == LVAL_SEXPR) return lval_expr_eval(e, v);
-
     return v;
 }
 void lenv_add_buildin(lenv* e, char* sym, lbuildin fun) {
