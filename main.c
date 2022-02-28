@@ -609,6 +609,8 @@ lval* lval_call(lenv* e, lval* v, lval* f) {
         lval_del(sym); lval_del(val);
     }
     lval_del(v);
+    // 这里的作用，是在上面执行后，仍然还有 `& x`
+    // 其实参数已经写完，只剩复数参数，那么直接给其复制空参数即可执行了
     if (f->formals->count != 0 &&  strcmp(f->formals->cell[0]->sym, "&") == 0) {
         if (f->formals->count != 2) {
             return lval_err("Function '%s' pass invalid format argument!"
