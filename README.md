@@ -19,4 +19,4 @@ Feel free to contact me if you have any trouble on this project:
 
 ## Ref
 
-(原文书籍](https://buildyourownlisp.com/)
+[原文书籍](https://buildyourownlisp.com/)
